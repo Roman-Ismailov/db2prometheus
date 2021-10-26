@@ -1,0 +1,27 @@
+from sqlalchemy.ext.automap import automap_base
+from sqlalchemy import Column, Integer, String, ForeignKey
+
+Base = automap_base()
+
+class User(Base):
+    __tablename__ = 'user'
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String)
+
+class Address(Base):
+    __tablename__ = 'address'
+
+    id = Column(Integer, primary_key=True)
+    email = Column(String)
+    user_id = Column(ForeignKey('user.id'))
+
+# produce relationships
+Base.prepare()
+
+# mapping is complete, with "address_collection" and
+# "user" relationships
+a1 = Address(email='u1')
+a2 = Address(email='u2')
+u1 = User(address_collection=[a1, a2])
+assert a1.user is u1

@@ -1,0 +1,113 @@
+@startuml
+'skinparam noteBackgroundColor blue
+'skinparam noteBackgroundColor<<myStyle>> red
+'https://plantuml.com/class-diagram
+
+'metric_name ["{" label_name "=" `"` label_value `"`
+'{ "," label_name "=" `"` label_value `"` } [ "," ] "}"] value [ timestamp ]
+'
+'https://grafana.com/blog/2020/02/04/introducion-to-promql-the-prometheus-query-language/
+'biz_loan_bucket {credit_type="potreb",le="30"} 30
+'race_duration_seconds_bucket{app="klt",le="90"} 2
+'race_duration_seconds_bucket{app="klt",le="180"} 7
+'race_duration_seconds_bucket{app="klt",le="+Inf"} 11
+'race_duration_seconds_count 11
+'race_duration_seconds_sum 511200
+
+'enum and info metric types
+'Info¶
+'
+'Info tracks key-value information, usually about a whole target.
+'
+'from prometheus_client import Info
+'i = Info('my_build_version', 'Description of info')
+'i.info({'version': '1.2.3', 'buildhost': 'foo@bar'})
+'Enum¶
+'
+'Enum tracks which of a set of states something is currently in.
+'
+'from prometheus_client import Enum
+'e = Enum('my_task_state', 'Description of enum',
+'        states=['starting', 'running', 'stopped'])
+'e.state('running')
+class Info{
+*name always suffix _info
+*value always 1
+}
+'note left:node_uname_info{instance=”10.0.2.15:9100”}
+'node_uname_info{domainname="(none)",endpoint="node-exporter", instance="10.0.2.15:9100",job="node-exporter-service",machine="x86_64", namespace="monitoring",nodename="minikube",pod="node-exporter-r88r6", release="4.15.0",service="node-exporter-service",sysname="Linux", version="#1 SMP Fri Dec 21 23:51:58 UTC 2018"} 1
+
+
+
+class Gauge {
+value float
+}
+'note right:value is incremented\nwith each result\nfrom queries
+class Counter{
+value float
+}
+'note right:value is incremented\nwith each result\nfrom queries
+class Histogram {
+    *buckets[]
+}
+'note left:each result from\nqueries is added to\nobservations\none bucket +Inf mandatory
+
+class Summary{
+    value float
+}
+'note left:each result from\nqueries is added to\nobservations
+
+class Enum {
+*value 0 or 1
+*states[]:
+}
+'node_systemd_unit_state{name="kubelet.service"}
+'node_systemd_unit_state{endpoint="node-exporter",instance="10.0.2.15:9100",job="node-exporter-service",name="kubelet.service", namespace="monitoring",pod="node-exporter-jx2c2", state="activating"} 0
+'node_systemd_unit_state{endpoint="node-exporter",instance="10.0.2.15:9100",job="node-exporter-service",name="kubelet.service", namespace="monitoring",pod="node-exporter-jx2c2", state="active"} 1
+'node_systemd_unit_state{endpoint="node-exporter",instance="10.0.2.15:9100",job="node-exporter-service",name="kubelet.service", namespace="monitoring",pod="node-exporter-jx2c2", state="deactivating"} 0
+'node_systemd_unit_state{endpoint="node-exporter",instance="10.0.2.15:9100",job="node-exporter-service",name="kubelet.service", namespace="monitoring",pod="node-exporter-jx2c2", state="failed"} 0
+'node_systemd_unit_state{endpoint="node-exporter",instance="10.0.2.15:9100",job="node-exporter-service",name="kubelet.service", namespace="monitoring",pod="node-exporter-jx2c2"", state="inactive"} 0
+
+
+'note left:a list of string\nvalues for\npossible states
+
+class State{
+name always state
+}
+
+
+abstract class AbstractLabel {
+    name
+}
+
+class TextLabel{
+    *value text
+}
+
+class BucketLabel {
+*value float
+}
+
+
+
+abstract class AbstractMetric {
+    *name
+    description
+    timestamp - milliseconds since unix epoch
+    labels[]:an optional list of label names to apply to the metric.
+}
+
+Histogram *-u- BucketLabel
+Enum *-- State
+AbstractLabel <|--State
+AbstractLabel <|--TextLabel
+AbstractLabel <|--BucketLabel
+AbstractMetric o-l- AbstractLabel
+AbstractMetric<|-r- Gauge
+AbstractMetric<|-- Counter
+AbstractMetric<|-u- Histogram
+AbstractMetric<|-- Summary
+Gauge <|--Info
+Gauge <|--Enum
+
+@enduml
