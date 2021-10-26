@@ -80,7 +80,7 @@ class BaseMetric(abc.ABC):
 
 @mapper_registry.mapped
 @dataclass
-class BaseLabel:
+class BaseLabel(abc.ABC):
     __tablename__ = 'base_labels'
     metadata = metadata
     __sa_dataclass_metadata_key__ = "sa"
