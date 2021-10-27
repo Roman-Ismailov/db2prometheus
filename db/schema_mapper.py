@@ -47,10 +47,23 @@ class TableMixin:
         init=False, metadata={"sa": Column(Integer, primary_key=True)}
     )
 
+@mapper_registry.mapped
+@dataclass
+class MetricLabelAssoc:
+    __tablename__='metric_label_assoc'
+    metadata = metadata
+    __sa_dataclass_metadata_key__ = "sa"
+    metric_id = Column (ForeignKey('base_metrics.id'), primary_key=True)
+    label_id = Column (ForeignKey('base_labels.id'), primary_key=True)
+    value: float = field (default = None, metadata={"sa":Column(Float, nullable=False)})
+#    labels: List[BaseLabel] = field(default_factory=list, metadata={"sa": relationship("BaseLabel")})
+    label = relationship("BaseLabel", back_populates = "base_metrics")
+    metric = relationship("BaseMetric", back_populates = "base_labels")
+
 
 @mapper_registry.mapped
 @dataclass
-class BaseMetric(abc.ABC):
+class BaseMetric:
     """"
     A class used to represent common prometheus metric attributes
     Attributes
@@ -77,10 +90,14 @@ class BaseMetric(abc.ABC):
     last_collected:datetime = field(default=None, metadata={"sa":Column(DateTime, nullable=True)})
     collect_interval_seconds:int = field(default=None, metadata={"sa":Column(Integer, nullable=False)})
     description : str = field(default=None, metadata={"sa":Column(String(256), nullable=False)})
+#    labels = relationship("MetricLabelAssoc")
+    labels: List[BaseLabel] = field(default_factory=list, metadata={"sa": relationship("MetricLabelAssoc")})
+    base_labels = relationship("MetricLabelAssoc", back_populates = "metric")
+
 
 @mapper_registry.mapped
 @dataclass
-class BaseLabel(abc.ABC):
+class BaseLabel:
     __tablename__ = 'base_labels'
     metadata = metadata
     __sa_dataclass_metadata_key__ = "sa"
@@ -93,6 +110,7 @@ class BaseLabel(abc.ABC):
     )
     metric_id = Column(Integer, ForeignKey('base_metrics.id'))
     type = Column(String(50), nullable=False)
+    base_metrics = relationship("MetricLabelAssoc", back_populates = "label")
 #    metrics: List[BaseMetric] = field(default_factory=list, metadata={"sa":relationship("base_metrics.id")})
 #    metric_id = Column(Integer, ForeignKey('base_metrics.id'))
 
@@ -199,6 +217,10 @@ def prep_db(session):
     m2.labels = [l4,l5,l6]
     m2.value = float(1)
 
+    bm = BaseMetric('mymetric', datetime.now(), None, 15*60, 'some metric')
+    bl = BaseLabel()
+    bm.labels = [bl]
+
 #    h1 = Histogram('client_bucket', datetime.now(), 'Класс клиента - бедный, средний, богатый')
 #    l7 = TextLabel('client_class', 'pure')
 #    b1 = BucketLabel(100000)
@@ -209,6 +231,7 @@ def prep_db(session):
     with session:
         session.add(m1)
         session.add(m2)
+        session.add(bm)
 #        session.add(h1)
         session.commit()
 
