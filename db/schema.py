@@ -1,162 +1,372 @@
-from __future__ import annotations
-
-from enum import Enum, unique
-from dataclasses import (dataclass, field)
-from typing import List
-
-
-from sqlalchemy import (
-    Column, Date, Enum as OraEnum, ForeignKey, ForeignKeyConstraint, Integer,
-    MetaData, String, Table, Numeric, orm, DateTime, Identity,
-)
-from sqlalchemy.orm import declarative_base, sessionmaker, Session, relationship, backref, registry
-from sqlalchemy import create_mock_engine, create_engine
+import sqlalchemy
+from sqlalchemy import Column, Integer, String, ForeignKey, text, Float
+from sqlalchemy.orm import sessionmaker, relationship, backref, declarative_base
+from sqlalchemy.future import select
+# from sqlalchemy.ext.associationproxy import association_proxy
+import uuid
+import copy
 
 
-mapper_registry = registry()
 
-
-# SQLAlchemy рекомендует использовать единый формат для генерации названий для
-# индексов и внешних ключей.
-# https://docs.sqlalchemy.org/en/13/core/constraints.html#configuring-constraint-naming-conventions
-convention = {
-    'all_column_names': lambda constraint, table: '_'.join([
-        column.name for column in constraint.columns.values()
-    ]),
-    'ix': 'ix__%(table_name)s__%(all_column_names)s',
-    'uq': 'uq__%(table_name)s__%(all_column_names)s',
-    'ck': 'ck__%(table_name)s__%(constraint_name)s',
-    'fk': 'fk__%(table_name)s__%(all_column_names)s__%(referred_table_name)s',
-    'pk': 'pk__%(table_name)s'
-}
-
-metadata = MetaData(naming_convention=convention)
+engine = sqlalchemy.create_engine('sqlite:///manytomany.sqlite', future=True, echo=True)  # sqlalchemy 2.0 api
 Base = declarative_base()
 
-def dump(sql, *multiparams, **params):
-    print(sql.compile(dialect=engine.dialect))
 
-#engine = create_mock_engine('oracle+cx_oracle://', dump)
-#engine = create_mock_engine('sqlite://', dump)
-CONNECTION_STRING = 'sqlite:///db2prometheus'
-#CONNECTION_STRING = 'sqlite:///:memory:'
-#engine = create_engine('sqlite:///:memory:', echo=True)
+class MetricLabel(Base):
+    __tablename__ = 'metrics_labels'
+    # id = Column(String(35), primary_key=True, unique=True)
+    # id = Column(Integer, primary_key=True, unique=True
+    metric_id = Column(Integer, ForeignKey('metrics.id'), primary_key=True)
+    label_id = Column(Integer, ForeignKey('labels.id'), primary_key=True)
+    value = Column(Float)
 
-class BaseMetric(Base):
-#    __abstract__ = True
-    metadata = metadata
-    __tablename__ = 'base_metrics'
-    __mapper_args__ = {
-        'polymorphic_identity':'base_metric',
-        'polymorphic_on':'type'
-    }
-    id = Column(Integer, Identity(start=3), primary_key=True)
-    type = Column(String(50))
-    name  = Column(String(64))
-    value = Column(Numeric)
-    last_update_date = Column(DateTime)
-    description = Column(String(256))
-    labels = orm.relationship('Label')
+
+    # metric_id = Column(Integer, ForeignKey('metrics.id'), primary_key=True)
+    # label_id = Column(Integer, ForeignKey('labels.id'), primary_key=True)
+
+    metric = relationship("Metric", backref=backref("metrics_labels", cascade="all, delete-orphan"))
+    label = relationship("Label", backref=backref("metrics_labels", cascade="all, delete-orphan"))
+
+    def __init__(self, metric=None, label=None, value=None):
+        # self.id = uuid.uuid4().hex
+        self.metric = metric
+        self.label = label
+        self.value = value
+
     def __repr__(self):
-        return "Metric(metric_type:'{self.type}',\
-         metric_name:'{self.name}', metric_value:'{self.value}'".format(self=self)
+        return '<MetricLabels {}>'.format(self.metric.name+" "+self.label.name)
 
-class Gauge(BaseMetric):
-    metadata = metadata
-    __tablename__ = 'gauge_metrics'
-    id = Column(Integer, ForeignKey('base_metrics.id'), primary_key = True)
-    __mapper_args__ = {
-        'polymorphic_identity':'gauge',
-    }
 
-class Counter(BaseMetric):
-    metadata = metadata
-    __tablename__ = 'counter_metrics'
-    id = Column(Integer, ForeignKey('base_metrics.id'), primary_key = True)
-    __mapper_args__ = {
-        'polymorphic_identity':'counter',
-    }
+class Metric(Base):
+    __tablename__ = 'metrics'
+    # id = Column(String(35),  primary_key=True, unique=True)
+    id = Column(Integer,  primary_key=True, unique=True)
+    name = Column(String(80), nullable=False)
+    labels = relationship("Label", secondary="metrics_labels", viewonly=True)
 
-class Info (BaseMetric):
-    metadata = metadata
-    __tablename__ = 'info_metrics'
-    id = Column(Integer, ForeignKey('base_metrics.id'), primary_key = True)
-    __mapper_args__ = {
-        'polymorphic_identity':'info',
-    }
+    def __init__(self, name):
+        # self.id = uuid.uuid4().hex
+        self.name = name
+        self.orders = []
 
-class Summary (BaseMetric):
-    metadata = metadata
-    __tablename__ = 'summary_metrics'
-    id = Column(Integer, ForeignKey('base_metrics.id'), primary_key = True)
-    __mapper_args__ = {
-        'polymorphic_identity':'summary',
-    }
+    def add_labels(self, items):
+        for label, value in items:
+            self.metrics_labels.append(MetricLabel(metric=self, label=label, value=value))
 
-@mapper_registry.mapped
-@dataclass
-class Bucket(Base):
-    metadata = metadata
-    __tablename__ = 'buckets'
-    __sa_dataclass_metadata_key__="sa"
-    id: int = field(init=False, metadata={"sa": Column(Integer, primary_key=True)})
-    value_le: float = field(init=False, metadata={"sa": Column(Numeric)})
-#    histogram_id: int = field(init = False, metadata={"sa": Column(ForeignKey("histogram_metrics.id"))})
-    histograms: List[Histogram] = field(default_factory=list, metadata={"sa":relationship("Histogram")})
+    def __repr__(self):
+        return '<Product {}>'.format(self.name)
 
-@mapper_registry.mapped
-@dataclass
-class Histogram (BaseMetric):
-    metadata = metadata
-    __tablename__ = 'histogram_metrics'
-    __sa_dataclass_metadata_key__="sa"
-    id: int = field(init = False, metadata={"sa":Column(Integer, primary_key=True)})
-    bucket_id: int = field(init = False, metadata={"sa": Column(ForeignKey("buckets.id"))})
-    __mapper_args__ = {
-         'polymorphic_identity':'histogram',
-    }
 
 class Label(Base):
     __tablename__ = 'labels'
-    metadata = metadata
-    id = Column(Integer, primary_key=True)
-    metric_id = Column(Integer, ForeignKey('base_metrics.id'))
+    # id = Column(String(35),  primary_key=True, unique=True)
+    id = Column(Integer,  primary_key=True, unique=True)
+    name = Column(String(64), nullable=False)
+    value = Column(String(64), nullable=False)
+    metrics = relationship("Metric", secondary="metrics_labels", viewonly=True)
+
+    def __key(self):
+        return (self.name, self.value)
+
+    def __hash__(self):
+        return hash(self.__key())
+
+    # compare only key val
+    def __eq__(self, other):
+        if isinstance(other, Label):
+            return self.__key() == other.__key()
+        return NotImplemented
+
+    def __init__(self, name, value):
+        # self.id = uuid.uuid4().hex
+        self.name = name
+        self.value = value
+        self.metrics = []
+
+    def __repr__(self):
+        return '<Label {}>'.format(self.name)
+
+class LabelsSet(Base):
+    __tablename__='labels_sets'
+    id = Column(Integer, nullable=False, primary_key=True, unique=True)
+    hash = Column(String(64))
+    _labels = set()
+
+    def __key(self):
+        x=''
+        for l in self._labels:
+            x = x+l.name+l.value
+        return (x)
+
+    def __hash__(self):
+        print('DEBUG',self, self.__key())
+        return (uuid.uuid5(uuid.NAMESPACE_DNS, self.__key()).hex)
+
+    # compare only key val
+    def __eq__(self, other):
+        if isinstance(other, Label):
+            return self.__key() == other.__key()
+        return NotImplemented
+
+    def __init__(self, labels=[]):
+        self._labels = set()
+        self.__update(labels)
+        self.hash = self.__hash__()
+
+    def sorted_list(self):
+        return sorted(set(self._labels), key=lambda label: label.name.strip().upper()
+                                                    +label.value.strip().upper())
+
+    def __update(self, labels = []):
+
+        # return NotImplemented
+        v_labels  = copy.deepcopy(labels)
+        for l in v_labels:
+            l.name = l.name.upper().strip()
+            l.value = l.value.upper().strip()
+            if isinstance (self._labels, list):
+                self._labels.append([l])
+            else:
+                self._labels.update([l])
+            # self._labels = self._labels[:]
+        self._labels = self.sorted_list()
+
+        # print(self._labels)
 
 
-class DataAccessLayer:
-    def __init__(self):
-        self.engine = None
-        self.conn_string = CONNECTION_STRING
-
-    def connect(self):
-        self.engine = create_engine(self.conn_string, echo=True)
-        Base.metadata.create_all(self.engine)
-        self.Session = sessionmaker(bind = self.engine)
-        self.Session.configure(bind = self.engine)
-#        self.session = Session.configure(bind = self.engine)
-
-    # def createSession(self):
-    #     Session = sessionmaker()
-    #     self.session = Session.configure(bind=self.engine)
-
-dal = DataAccessLayer()
-dal.connect()
-metadata.drop_all(dal.engine, checkfirst=False)
-metadata.create_all(dal.engine, checkfirst=False)
-
-def prep_db(session):
-    b1 = Bucket( value_le = 100.00)
-    b2 = Bucket( value_le = 120.00)
-    b3 = Bucket( value_le = 150.00)
-
-#    h1 = Histogram( bucket = b1 )
+Base.metadata.drop_all(engine)
+Base.metadata.create_all(engine)
 
 
-    with session:
-        session.bulk_save_objects([b1, b2, b3])
-        session.add(h1)
-        session.commit()
+Session = sessionmaker(bind=engine)
+session = Session()
 
-session = dal.Session()
-prep_db(session)
-#prep_db(Session(dal.session).bulk_save_objects(m1))
+l1 = Label(name="team",value= "Dream Team")
+l2 = Label(name="version",value= "4.0")
+l3 = Label(name="owner",value= "DRPA")
+l4 = Label(name="version",value= "6.0")
+l5 = Label(name="version",value= "5.0")
+l6 = Label(name="version",value= "15.0")
+l7 = Label(name="team",value= "pirates")
+l8 = Label(name="team1",value= "pirates")
+
+session.add_all([l1, l2, l3, l4, l5, l6, l7])
+session.commit()
+
+m1 = Metric(name="MyMetric")
+m1.add_labels([(l1, 1.0), (l2, 1)])
+# m1.labels=[l1, l2, l3, l4]
+session.add(m1)
+session.commit()
+
+
+ls = list(session.execute(select(Label)).scalars().all())
+ls1 = session.execute(select(Label).where(Label.name == 'a')).scalars().all()
+print(ls)
+print(ls1)
+l = LabelsSet(ls)
+lbls = LabelsSet(ls1)
+
+print(l.__hash__(), lbls.__hash__())
+
+l = LabelsSet([l1, l1, l2, l3, l4])
+session.add(l)
+session.commit()
+
+for x in l._labels:
+    print((x.name), x.value, 'adfdsf')
+print(l.__hash__())
+# l.update(set([l8]))
+print(lbls.__hash__())
+
+# print(l.__hash__())
+# -2926104772848612253
+#-7735740376372270998
+#-898691598417870252
+# print(l.__key__())
+# print(sorted(oset, key = lambda label: label.name+label.value))
+
+
+# order1 = Order( name = "First Order")
+# order2 = Order( name = "Second Order")
+#
+
+# ###drop down
+
+# class AbstractMetric( AbstractConcreteBase ):
+#    # __mapper_args__ = {
+#    #     'polymorphic_identity':'abstract_metric',
+#    #     'polymorphic_on':'type'
+#    # }
+#    # id = Column(String(35), primary_key=True, unique=True)
+#    # type = Column(String(50))
+#    def __init__(self, name):
+#        self.id = uuid.uuid5(uuid.NAMESPACE_DNS, name=name.upper() ).hex
+#        #self.id = uuid.uuid4().hex
+#        self.name = name.upper().strip()
+#
+#    id = Column(String(35),  primary_key=True, unique=True)
+#    name = Column(String(64), nullable=False)
+#    @declared_attr
+#    def label_id(cls):
+#        return Column(ForeignKey('abstract_labels.id'))
+#    @declared_attr
+#    def labels(cls):
+#        return relationship("AbstractLabel")
+#        # if type(cls).name == 'TextLabel':
+#        #     return relationship("TextLabel", secondary="text_labels", viewonly=True)
+#    #pass
+#
+# class Gauge(AbstractMetric):
+#    __tablename__ = 'gauge_metrics'
+#    value = Column(Float, nullable=False)
+#    label_id = Column(Integer, ForeignKey('text_labels.id'), primary_key=True)
+#    def __init__(self, name, value, labels = []):
+#        self.value = value
+#        # self.labels =[]
+#        super(Gauge, self).__init__(name)
+#    __mapper_args__ = {
+#        'polymorphic_identity':'gauge',
+#        'concrete':True
+#    }
+#
+#class AbstractLabel(AbstractConcreteBase, Base):
+#    def __init__(self, name):
+#        self.id = uuid.uuid4().hex
+#        self.name = name
+#    id = Column(String(35),  primary_key=True, unique=True)
+#    name = Column(String(64), nullable=False)
+#
+#class TextLabel(AbstractLabel):
+#    __tablename__ = 'text_labels'
+#    value = Column(String(64), nullable=False)
+#    def __init__(self, name, value, metric):
+#        self.name = name
+#        self.value = value
+#        super(TextLabel, self).__init__(name)
+#
+#    __mapper_args__ = {
+#        'polymorphic_identity':'text_label',
+#        'concrete':True
+#    }
+#
+#
+#class Histogram(AbstractMetric):
+#    __tablename__ = 'histogram_metrics'
+#    value = Column(Float, nullable=False)
+#    __mapper_args__ = {
+#        'polymorphic_identity':'histogram',
+#        'concrete':True
+#    }
+#configure_mappers()
+#
+#
+#
+#
+#class Order_Product(Base):
+#    __tablename__ = 'order_product'
+#    id = Column(String(35), primary_key=True, unique=True)
+#    order_id = Column(Integer, ForeignKey('orders.id'), primary_key=True)
+#    product_id = Column(Integer, ForeignKey('products.id'), primary_key=True)
+#    quantity = Column(Integer)
+#
+#    order = relationship("Order", backref=backref("order_products", cascade="all, delete-orphan" ))
+#    product = relationship("Product", backref=backref("order_products", cascade="all, delete-orphan" ))
+#
+#    def __init__(self, order=None, product=None, quantity=None):
+#        self.id = uuid.uuid4().hex
+#        self.order = order
+#        self.product =  product
+#        self.quantity = quantity
+#
+#    def __repr__(self):
+#        return '<Order_Product {}>'.format(self.order.name+" "+self.product.name)
+#
+#class Product(Base):
+#    __tablename__ = 'products'
+#    id = Column(String(35),  primary_key=True, unique=True)
+#    name = Column(String(80), nullable=False)
+#
+#    orders = relationship("Order", secondary="order_product", viewonly=True)
+#
+#    def __init__(self, name):
+#        self.id = uuid.uuid4().hex
+#        self.name = name
+#        self.orders=[]
+#
+#    def __repr__(self):
+#        return '<Product {}>'.format(self.name)
+#
+#
+#class Order(Base):
+#    __tablename__ = 'orders'
+#    id = Column(String(35),  primary_key=True, unique=True)
+#    name = Column(String(80), nullable=False)
+#
+#    products = relationship("Product", secondary="order_product", viewonly=True)
+#
+#    def add_products(self, items):
+#        for product, qty in items:
+#            self.order_products.append(Order_Product(order=self, product=product, quantity=qty))
+#
+#
+#
+#
+#    def __init__(self, name):
+#        self.id = uuid.uuid4().hex
+#        self.name = name
+#        self.products =[]
+#
+#    def __repr__(self):
+#        return '<Order {}>'.format(self.name)
+#
+#
+#Base.metadata.drop_all(engine)
+#Base.metadata.create_all(engine)
+#
+#Session = sessionmaker(bind=engine)
+#session = Session()
+#
+#prod1 = Product(name="Oreo")
+#prod2 = Product(name="Hide and Seek")
+#prod3 = Product(name="Marie")
+#prod4 = Product(name="Good Day")
+#
+#
+#session.add_all([prod1, prod2, prod3, prod4])
+#session.commit()
+#
+#order1 = Order( name = "First Order")
+#order2 = Order( name = "Second Order")
+#
+#gauge1 = Gauge(name = 'gini', value = 1.23)
+## text_label1 = TextLabel(name = 'team_name', value = 'apl_products', metric = gauge1)
+#
+#session.add(gauge1)
+## session.add(text_label1)
+#
+#
+#order1.add_products([ (prod1,4) , (prod2,5) , (prod3,4) ])
+#order2.add_products([ (prod2,6) , (prod1,1) , (prod3,2), (prod4,1) ])
+#
+#session.commit()
+#
+#
+#print( "Products array of order1: ")
+#print( order1.products)
+#print( "Products array of order2: ")
+#print( order2.products)
+#print( "Orders array of prod1: ")
+#print( prod1.orders)
+#print( "Orders array of prod2: ")
+#print( prod2.orders)
+#print( "Orders array of prod3: ")
+#print( prod3.orders)
+#print( "Orders array of prod4: ")
+#print( prod4.orders)
+#
+#print( "Order_Products Array of order1 : ")
+#print( order1.order_products)
+#
+#print( "Order_Products Array of prod1 : ")
+#print( prod1.order_products)
